@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic OneDrive LawOffice auth and health alert check
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+Unit=onedrive-lawoffice-auth-alert.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

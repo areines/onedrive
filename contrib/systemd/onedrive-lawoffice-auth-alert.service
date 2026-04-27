@@ -1,0 +1,8 @@
+[Unit]
+Description=OneDrive LawOffice auth and health alert check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/onedrive-lawoffice-auth-alert.sh --signal-format --quiet-ok

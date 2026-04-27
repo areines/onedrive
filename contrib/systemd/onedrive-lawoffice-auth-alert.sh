@@ -7,11 +7,13 @@ RECOVERY_SCRIPT="${RECOVERY_SCRIPT:-/usr/local/bin/onedrive-lawoffice-recover.sh
 LOG_LINES="${LOG_LINES:-80}"
 
 RUN_RECOVER=0
+SIGNAL_FORMAT=0
+QUIET_OK=0
 
 usage() {
   cat <<'EOF'
 Usage:
-  onedrive-lawoffice-auth-alert.sh [--recover]
+  onedrive-lawoffice-auth-alert.sh [--recover] [--signal-format] [--quiet-ok]
 
 What it does:
   1. Checks the OneDrive service state
@@ -31,6 +33,14 @@ parse_args() {
         RUN_RECOVER=1
         shift
         ;;
+      --signal-format)
+        SIGNAL_FORMAT=1
+        shift
+        ;;
+      --quiet-ok)
+        QUIET_OK=1
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -42,6 +52,21 @@ parse_args() {
         ;;
     esac
   done
+}
+
+print_signal_down() {
+  local detail_lines=("$@")
+  printf 'OneDrive sync is DOWN on VPS:\n'
+  local line
+  for line in "${detail_lines[@]}"; do
+    printf 'o %s\n' "${line}"
+  done
+  printf 'Fix: %s\n' "${RECOVERY_SCRIPT}"
+}
+
+print_signal_ok() {
+  printf 'OneDrive sync is OK on VPS:\n'
+  printf 'o service is active running\n'
 }
 
 service_field() {
@@ -75,10 +100,17 @@ main() {
   fi
 
   if [[ "${auth_issue}" -eq 1 ]]; then
-    printf 'OneDrive auth issue detected for %s\n' "${SERVICE_NAME}"
-    printf '  ActiveState=%s SubState=%s Result=%s\n' "${active_state:-unknown}" "${sub_state:-unknown}" "${result:-unknown}"
-    printf '  CONF_DIR=%s\n' "${CONF_DIR}"
-    printf '  Suggested fix: %s\n' "${RECOVERY_SCRIPT}"
+    if [[ "${SIGNAL_FORMAT}" -eq 1 ]]; then
+      print_signal_down \
+        "service is ${active_state:-unknown} ${sub_state:-unknown} (${result:-unknown})" \
+        "auth token expired - needs --reauth" \
+        "confdir ${CONF_DIR}"
+    else
+      printf 'OneDrive auth issue detected for %s\n' "${SERVICE_NAME}"
+      printf '  ActiveState=%s SubState=%s Result=%s\n' "${active_state:-unknown}" "${sub_state:-unknown}" "${result:-unknown}"
+      printf '  CONF_DIR=%s\n' "${CONF_DIR}"
+      printf '  Suggested fix: %s\n' "${RECOVERY_SCRIPT}"
+    fi
     if [[ "${RUN_RECOVER}" -eq 1 ]]; then
       exec "${RECOVERY_SCRIPT}"
     fi
@@ -86,23 +118,43 @@ main() {
   fi
 
   if [[ "${active_state}" != "active" || "${sub_state}" != "running" ]]; then
-    printf 'OneDrive service is not healthy: ActiveState=%s SubState=%s Result=%s\n' "${active_state:-unknown}" "${sub_state:-unknown}" "${result:-unknown}"
-    if [[ "${lock_issue}" -eq 1 ]]; then
-      printf '  Recent logs include a database-lock condition.\n'
+    if [[ "${SIGNAL_FORMAT}" -eq 1 ]]; then
+      local details=("service is ${active_state:-unknown} ${sub_state:-unknown} (${result:-unknown})")
+      if [[ "${lock_issue}" -eq 1 ]]; then
+        details+=("database lock detected")
+      fi
+      if [[ "${segv_issue}" -eq 1 ]]; then
+        details+=("segmentation fault detected")
+      fi
+      print_signal_down "${details[@]}"
+    else
+      printf 'OneDrive service is not healthy: ActiveState=%s SubState=%s Result=%s\n' "${active_state:-unknown}" "${sub_state:-unknown}" "${result:-unknown}"
+      if [[ "${lock_issue}" -eq 1 ]]; then
+        printf '  Recent logs include a database-lock condition.\n'
+      fi
+      if [[ "${segv_issue}" -eq 1 ]]; then
+        printf '  Recent logs include a segmentation fault.\n'
+      fi
+      printf '  Suggested fix: %s --skip-reauth\n' "${RECOVERY_SCRIPT}"
     fi
-    if [[ "${segv_issue}" -eq 1 ]]; then
-      printf '  Recent logs include a segmentation fault.\n'
-    fi
-    printf '  Suggested fix: %s --skip-reauth\n' "${RECOVERY_SCRIPT}"
     if [[ "${RUN_RECOVER}" -eq 1 ]]; then
       exec "${RECOVERY_SCRIPT}" --skip-reauth
     fi
     exit 11
   fi
 
-  printf 'OneDrive service is healthy: ActiveState=%s SubState=%s Result=%s\n' "${active_state:-unknown}" "${sub_state:-unknown}" "${result:-unknown}"
-  if [[ "${lock_issue}" -eq 1 ]]; then
-    printf 'Recent logs mention a database lock, but the service is currently running.\n'
+  if [[ "${QUIET_OK}" -eq 0 ]]; then
+    if [[ "${SIGNAL_FORMAT}" -eq 1 ]]; then
+      print_signal_ok
+      if [[ "${lock_issue}" -eq 1 ]]; then
+        printf 'o recent logs mention a database lock, but service recovered\n'
+      fi
+    else
+      printf 'OneDrive service is healthy: ActiveState=%s SubState=%s Result=%s\n' "${active_state:-unknown}" "${sub_state:-unknown}" "${result:-unknown}"
+      if [[ "${lock_issue}" -eq 1 ]]; then
+        printf 'Recent logs mention a database lock, but the service is currently running.\n'
+      fi
+    fi
   fi
   exit 0
 }
